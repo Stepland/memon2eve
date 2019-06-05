@@ -302,7 +302,7 @@ class MemonChart:
             memonChart.resolution = int(_dict["resolution"])
             memonChart.notes = set(MemonNote.fromDict(noteDict) for noteDict in _dict["notes"])
             
-            if len(memonChart.notes) != _dict["notes"]:
+            if len(memonChart.notes) != len(_dict["notes"]):
                 warnings.warn("Some duplicate notes were ignored")
         
         except KeyError:
@@ -394,7 +394,7 @@ class Memon:
         self.song_title = ""
         self.artist = ""
         self.music_path = ""
-        self.jacket_path = ""
+        self.album_cover_path = ""
         self._BPM = 120
         self._offset = 0
         self.charts = dict()
@@ -432,11 +432,12 @@ class Memon:
             memon.song_title = meta["song title"]
             memon.artist = meta["artist"]
             memon.music_path = meta["music path"]
-            memon.jacket_path = meta["jacket path"]
+            memon.album_cover_path = meta["album cover path"]
             memon.BPM = meta["BPM"]
             memon.offset = meta["offset"]
 
-            for chart in _dict["data"]:
+            for dif_name, chart in _dict["data"].items():
+                chart.update({"dif_name" : dif_name})
                 c = MemonChart.fromDict(chart)
                 if c.dif_name in memon.charts:
                     raise ValueError(f"Difficulty names must be unique inside of a Memon file : {chart['dif_name']}")
@@ -453,7 +454,7 @@ class Memon:
         meta["song title"] = self.song_title
         meta["artist"] = self.artist
         meta["music path"] = self.music_path
-        meta["jacket path"] = self.jacket_path
+        meta["album cover path"] = self.album_cover_path
         meta["BPM"] = self.BPM
         meta["offset"] = self.offset
 
@@ -533,7 +534,7 @@ if __name__ == "__main__":
         with open(inputFile,"r") as memonFile:
             memon = Memon.fromDict(json.load(memonFile))
         
-        for _, chart in memon.charts:
+        for _, chart in memon.charts.items():
             evePath = outputFile.parent/(outputFile.stem + f" [{chart.dif_name}]")
             with open(evePath,"w") as eveFile:
                 for line in chart.toEve(memon.BPM):
