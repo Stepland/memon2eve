@@ -1,7 +1,14 @@
 import json
 import warnings
+from math import ceil
 from pathlib import Path
+from functools import partial
 from typing import List, Type
+
+
+def memonTimingToEveTiming(tick, BPM, offset, resolution):
+    return ((60*tick)/(BPM*resolution)-offset)*300
+
 
 class EveLine:
 
@@ -28,10 +35,10 @@ class EveLine:
         0xD : 10,
     }
 
-    type_order = ["MEASURE","HAKU","PLAY","LONG","TEMPO","END"]
+    type_order = ["END","MEASURE","HAKU","PLAY","LONG","TEMPO"]
 
     def __init__(self, tick, _type, val):
-        self.tick = int(tick)
+        self.tick = round(tick)
         self.type = str(_type).strip()
         self.val = int(val)
     
@@ -319,61 +326,49 @@ class MemonChart:
         d["notes"] = [note.jsonify() for note in sorted(self.notes,key=MemonNote.cmp_key)]
         
         return d
-    
-    def toEve(self, BPM):
+
+    def toEve(self, BPM, offset):
+
+        toEveTiming = partial(memonTimingToEveTiming, BPM=BPM, offset=offset, resolution=self.resolution)
             
-        ordered_notes : List[MemonNote] = sorted(self.notes,key=MemonNote.cmp_key)
+        ordered_notes = sorted(self.notes, key=MemonNote.cmp_key)
 
-        lines = [EveLine(0,"TEMPO",(60*10**6)//BPM)]
+        skipped_beats = max(0, ceil(offset*BPM/60))
+        if skipped_beats > 0:
+            warnings.warn("Beat 0 of the memon file happens before the start of the audio, some notes may be ignored")
 
-        beat = 0
-
-        while ordered_notes[-1].timing > beat*self.resolution:
-
-            tick = (beat * 60 * 300 ) // BPM
-
-            if beat%4 == 0:
-                lines.append(EveLine(tick,"MEASURE",0))
-
-            lines.append(EveLine(tick,"HAKU",0))
-
-            beat += 1
+        beat_zero = toEveTiming(self.resolution*skipped_beats)
         
-        # Finish off with a first free measure
-        while beat%4 != 0:
-            tick = (beat * 60 * 300 ) // BPM
-            lines.append(EveLine(tick,"HAKU",0))
-            beat += 1
-        
-        # Add the special END tag
-        tick = (beat * 60 * 300 ) // BPM
-        lines.append(EveLine(tick,"END",0))
-        lines.append(EveLine(tick,"MEASURE",0))
-        lines.append(EveLine(tick,"HAKU",0))
-        beat += 1
+        lines = [EveLine(beat_zero, "TEMPO", (60*10**6)//BPM)]
 
-        # then add a second free measure
-        while beat%4 != 0:
-            tick = (beat * 60 * 300 ) // BPM
-            lines.append(EveLine(tick,"HAKU",0))
-            beat += 1
+        last_note_measure = (ordered_notes[-1].timing // self.resolution - skipped_beats) // 4
+
+        for measure in range(last_note_measure+1+2):
+            lines.append(EveLine(toEveTiming(((measure*4)+skipped_beats)*self.resolution), "MEASURE", 0))
+            for beat in range(4):
+                lines.append(EveLine(toEveTiming(((measure*4)+skipped_beats+beat)*self.resolution), "HAKU", 0))
         
+        lines.append(EveLine(toEveTiming(self.resolution*(4*(last_note_measure+2)+skipped_beats)), "END", 0))
+
         for note in ordered_notes:
             
-            tick = (note.timing * 60 * 300) // (self.resolution * BPM)
+            tick = memonTimingToEveTiming(note.timing, BPM, offset, self.resolution)
 
-            if note.length == 0:
+            if tick >= beat_zero:
 
-                lines.append(EveLine(tick,"PLAY",note.position))
+                if note.length == 0:
 
+                    lines.append(EveLine(tick,"PLAY",note.position))
+
+                else:
+
+                    length = (note.length * 60 * 300) // (self.resolution * BPM)
+                    tail_val = MemonNote.toEveTail[note.tail]
+                    long_val = length * 0x100 + tail_val*0x10 + note.position
+                    lines.append(EveLine(tick,"LONG",long_val))
+            
             else:
-
-                length = (note.length * 60 * 300) // (self.resolution * BPM)
-                tail_val = MemonNote.toEveTail[note.tail]
-
-                long_val = length * 0x100 + tail_val*0x10 + note.position
-
-                lines.append(EveLine(tick,"LONG",long_val))
+                warnings.warn(f"Skipped note that would occur at tick {tick}")
         
         return sorted(lines,key=EveLine.cmp_key)
 
@@ -473,7 +468,7 @@ class Memon:
 
         chart.dif_name = difName
 
-        tempo_lines = list(filter(lambda x:x.type=="TEMPO",eveLines))
+        tempo_lines = [x for x in eveLines if x.type=="TEMPO"]
 
         if not tempo_lines:
             warnings.warn("The .eve file does not indicate any BPM, a default of 120 will be assumed")
@@ -508,7 +503,7 @@ if __name__ == "__main__":
     parser.add_argument("input")
     parser.add_argument("output")
     parser.add_argument("--reversed",dest="reversed",action="store_true",help="Convert eve to memon instead")
-    parser.add_argument("--ignore-BPM", dest="ignoreBPM",action="store_true",help="Ignore BPM when converting from .eve")
+    parser.add_argument("--ignore-BPM", dest="ignoreBPM",action="store_true",help="Ignore BPM when converting")
 
     args = parser.parse_args()
 
@@ -535,9 +530,9 @@ if __name__ == "__main__":
             memon = Memon.fromDict(json.load(memonFile))
         
         for _, chart in memon.charts.items():
-            evePath = outputFile.parent/(outputFile.stem + f" [{chart.dif_name}]")
+            evePath = outputFile.parent/(outputFile.stem + f" [{chart.dif_name}].eve")
             with open(evePath,"w") as eveFile:
-                for line in chart.toEve(memon.BPM):
+                for line in chart.toEve(memon.BPM, memon.offset):
                     eveFile.write(f"{line!s}\n")
         
 
