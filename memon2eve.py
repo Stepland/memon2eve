@@ -38,7 +38,7 @@ class EveLine:
     type_order = ["END","MEASURE","HAKU","PLAY","LONG","TEMPO"]
 
     def __init__(self, tick, _type, val):
-        self.tick = round(tick)
+        self.tick = round(float(tick))
         self.type = str(_type).strip()
         self.val = int(val)
     
@@ -280,7 +280,6 @@ class MemonChart:
 
     def __init__(self):
 
-        self.dif_name = ""
         self.level = 0
         self._resolution = 240
         self.notes = set()
@@ -304,7 +303,6 @@ class MemonChart:
 
         try:
 
-            memonChart.dif_name = _dict["dif_name"]
             memonChart.level = int(_dict["level"])
             memonChart.resolution = int(_dict["resolution"])
             memonChart.notes = set(MemonNote.fromDict(noteDict) for noteDict in _dict["notes"])
@@ -320,7 +318,6 @@ class MemonChart:
     def jsonify(self):
 
         d = dict()
-        d["dif_name"] = self.dif_name
         d["level"] = self.level
         d["resolution"] = self.resolution
         d["notes"] = [note.jsonify() for note in sorted(self.notes,key=MemonNote.cmp_key)]
@@ -330,8 +327,6 @@ class MemonChart:
     def toEve(self, BPM, offset):
 
         toEveTiming = partial(memonTimingToEveTiming, BPM=BPM, offset=offset, resolution=self.resolution)
-            
-        ordered_notes = sorted(self.notes, key=MemonNote.cmp_key)
 
         skipped_beats = max(0, ceil(offset*BPM/60))
         if skipped_beats > 0:
@@ -341,7 +336,14 @@ class MemonChart:
         
         lines = [EveLine(beat_zero, "TEMPO", (60*10**6)//BPM)]
 
-        last_note_measure = (ordered_notes[-1].timing // self.resolution - skipped_beats) // 4
+        # If you don't take long notes ends into account you might end up with
+        # a long note end happening after the END tag wich will cause jubeat to
+        # freeze when trying to render the note density graph
+        all_events_timings = set(x.timing for x in self.notes)
+        for long_note in (x for x in self.notes if x.length > 0):
+            all_events_timings.add(long_note.timing+long_note.length)
+
+        last_note_measure = (max(all_events_timings) // self.resolution - skipped_beats) // 4
 
         for measure in range(last_note_measure+1+2):
             lines.append(EveLine(toEveTiming(((measure*4)+skipped_beats)*self.resolution), "MEASURE", 0))
@@ -350,7 +352,7 @@ class MemonChart:
         
         lines.append(EveLine(toEveTiming(self.resolution*(4*(last_note_measure+2)+skipped_beats)), "END", 0))
 
-        for note in ordered_notes:
+        for note in self.notes:
             
             tick = memonTimingToEveTiming(note.timing, BPM, offset, self.resolution)
 
@@ -374,12 +376,12 @@ class MemonChart:
 
 
     
-    @classmethod
-    def cmp_key(cls,chart):
-        if chart.dif_name in MemonChart.default_dif_names:
-            return [False,MemonChart.default_dif_names.index(chart.dif_name)]
+    @staticmethod
+    def cmp_key(dif_name):
+        if dif_name in MemonChart.default_dif_names:
+            return [0,MemonChart.default_dif_names.index(dif_name)]
         else:
-            return [True,chart.dif_name]
+            return [1,dif_name]
 
 
 class Memon:
@@ -430,13 +432,10 @@ class Memon:
             memon.album_cover_path = meta["album cover path"]
             memon.BPM = meta["BPM"]
             memon.offset = meta["offset"]
-
-            for dif_name, chart in _dict["data"].items():
-                chart.update({"dif_name" : dif_name})
-                c = MemonChart.fromDict(chart)
-                if c.dif_name in memon.charts:
-                    raise ValueError(f"Difficulty names must be unique inside of a Memon file : {chart['dif_name']}")
-                memon.charts[c.dif_name] = c
+            memon.charts = {
+                dif_name: MemonChart.fromDict(chart)
+                for dif_name, chart in _dict["data"].items()
+            }
 
         except KeyError:
             raise ValueError("Invalid memon file structure")
@@ -455,7 +454,9 @@ class Memon:
 
         d = dict()
         d["metadata"] = meta
-        d["data"] = [chart.jsonify() for chart in sorted(self.charts.values(),key=MemonChart.cmp_key)]
+        d["data"] = {
+            dif_name: self.charts[dif_name].jsonify() for dif_name in sorted(self.charts,key=MemonChart.cmp_key)
+        }
 
         return d
 
@@ -502,7 +503,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="memon2eve")
     parser.add_argument("input")
     parser.add_argument("output")
-    parser.add_argument("--reversed",dest="reversed",action="store_true",help="Convert eve to memon instead")
+    parser.add_argument("-r --reversed",dest="reversed",action="store_true",help="Convert eve to memon instead")
     parser.add_argument("--ignore-BPM", dest="ignoreBPM",action="store_true",help="Ignore BPM when converting")
 
     args = parser.parse_args()
@@ -529,8 +530,8 @@ if __name__ == "__main__":
         with open(inputFile,"r") as memonFile:
             memon = Memon.fromDict(json.load(memonFile))
         
-        for _, chart in memon.charts.items():
-            evePath = outputFile.parent/(outputFile.stem + f" [{chart.dif_name}].eve")
+        for dif_name, chart in memon.charts.items():
+            evePath = outputFile.parent/(outputFile.stem + f" [{dif_name}].eve")
             with open(evePath,"w") as eveFile:
                 for line in chart.toEve(memon.BPM, memon.offset):
                     eveFile.write(f"{line!s}\n")
