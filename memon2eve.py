@@ -116,7 +116,6 @@ class MemonNote:
     }
 
     def __init__(self):
-
         self._position = 0
         self._timing = 0
         self._length = 0
@@ -181,16 +180,12 @@ class MemonNote:
     
     @classmethod
     def fromDict(cls, _dict):
-        
         note = cls()
-
         try:
-
             note.position = int(_dict["n"])
             note.timing = int(_dict["t"])
             note.length = int(_dict["l"])
             note.tail = int(_dict["p"])
-
         except KeyError:
             raise ValueError(f"Invalid note dict structure : {_dict}")
         
@@ -198,23 +193,14 @@ class MemonNote:
     
     @classmethod
     def fromEveLine(cls, noteLine, BPM, res):
-
         note = cls()
-
         note.timing = round((noteLine.tick * BPM * res) / (60 * 300))
-
         if noteLine.type == "PLAY":  
-
             note.position = noteLine.val
-
         else:
-            
             note.position = noteLine.val % 0x10
-            
             length_in_ticks = noteLine.val >> 8
-
             note.length = round((length_in_ticks * BPM * (res / (300 * 60))))
-
             eve_tail = (noteLine.val % 0x100) >> 4
             note.tail = EveLine.toMemonTail[eve_tail]
         
@@ -222,22 +208,14 @@ class MemonNote:
     
     @classmethod
     def fromEveLineIgnoringBPM(cls, noteLine):
-
         note = cls()
-
         note.timing = noteLine.tick
-
         if noteLine.type == "PLAY":  
-
             note.position = noteLine.val
-
         else:
-
             note.length = noteLine.val >> 8
-
             eve_tail = (noteLine.val % 0x100) >> 4
             note.tail = EveLine.toMemonTail[eve_tail]
-
             note.position = noteLine.val % 0x10
         
         return note
@@ -258,11 +236,11 @@ class MemonNote:
     
     def jsonify(self):
         return {
-            "n":self.position,
-            "t":self.timing,
-            "l":self.length,
-            "p":self.tail
-            }
+            "n": self.position,
+            "t": self.timing,
+            "l": self.length,
+            "p": self.tail
+        }
     
     def __hash__(self):
         return hash((self.position,self.timing))
@@ -279,7 +257,6 @@ class MemonChart:
     default_dif_names = ["BSC","ADV","EXT"]
 
     def __init__(self):
-
         self.level = 0
         self._resolution = 240
         self.notes = set()
@@ -298,42 +275,35 @@ class MemonChart:
     
     @classmethod
     def fromDict(cls,_dict):
-
         memonChart = cls()
-
         try:
-
             memonChart.level = int(_dict["level"])
             memonChart.resolution = int(_dict["resolution"])
             memonChart.notes = set(MemonNote.fromDict(noteDict) for noteDict in _dict["notes"])
-            
             if len(memonChart.notes) != len(_dict["notes"]):
                 warnings.warn("Some duplicate notes were ignored")
-        
         except KeyError:
             raise ValueError(f"Invalid chart structure : {_dict}")
         
         return memonChart
     
     def jsonify(self):
-
-        d = dict()
-        d["level"] = self.level
-        d["resolution"] = self.resolution
-        d["notes"] = [note.jsonify() for note in sorted(self.notes,key=MemonNote.cmp_key)]
-        
-        return d
+        return {
+            "level": self.level,
+            "resolution": self.resolution,
+            "notes": [
+                note.jsonify
+                for note in sorted(self.notes, key=MemonNote.cmp_key)
+            ]
+        }
 
     def toEve(self, BPM, offset):
-
         toEveTiming = partial(memonTimingToEveTiming, BPM=BPM, offset=offset, resolution=self.resolution)
-
         skipped_beats = max(0, ceil(offset*BPM/60))
         if skipped_beats > 0:
             warnings.warn("Beat 0 of the memon file happens before the start of the audio, some notes may be ignored")
 
         beat_zero = toEveTiming(self.resolution*skipped_beats)
-        
         lines = [EveLine(beat_zero, "TEMPO", (60*10**6)//BPM)]
 
         # If you don't take long notes ends into account you might end up with
@@ -344,37 +314,26 @@ class MemonChart:
             all_events_timings.add(long_note.timing+long_note.length)
 
         last_note_measure = (max(all_events_timings) // self.resolution - skipped_beats) // 4
-
         for measure in range(last_note_measure+1+2):
             lines.append(EveLine(toEveTiming(((measure*4)+skipped_beats)*self.resolution), "MEASURE", 0))
             for beat in range(4):
                 lines.append(EveLine(toEveTiming(((measure*4)+skipped_beats+beat)*self.resolution), "HAKU", 0))
         
         lines.append(EveLine(toEveTiming(self.resolution*(4*(last_note_measure+2)+skipped_beats)), "END", 0))
-
         for note in self.notes:
-            
             tick = memonTimingToEveTiming(note.timing, BPM, offset, self.resolution)
-
             if tick >= beat_zero:
-
                 if note.length == 0:
-
                     lines.append(EveLine(tick,"PLAY",note.position))
-
                 else:
-
                     length = (note.length * 60 * 300) // (self.resolution * BPM)
                     tail_val = MemonNote.toEveTail[note.tail]
                     long_val = length * 0x100 + tail_val*0x10 + note.position
                     lines.append(EveLine(tick,"LONG",long_val))
-            
             else:
                 warnings.warn(f"Skipped note that would occur at tick {tick}")
-        
+
         return sorted(lines,key=EveLine.cmp_key)
-
-
     
     @staticmethod
     def cmp_key(dif_name):
@@ -385,9 +344,7 @@ class MemonChart:
 
 
 class Memon:
-
     def __init__(self):
-
         self.song_title = ""
         self.artist = ""
         self.music_path = ""
@@ -409,7 +366,7 @@ class Memon:
     
     @property
     def offset(self):
-        return self._offset
+        return self._offset-
     
     @offset.setter
     def offset(self, value):
@@ -420,12 +377,9 @@ class Memon:
         
     @classmethod
     def fromDict(cls,_dict):
-
         memon = cls()
-
         try:
             meta = _dict["metadata"]
-
             memon.song_title = meta["song title"]
             memon.artist = meta["artist"]
             memon.music_path = meta["music path"]
@@ -436,39 +390,33 @@ class Memon:
                 dif_name: MemonChart.fromDict(chart)
                 for dif_name, chart in _dict["data"].items()
             }
-
         except KeyError:
             raise ValueError("Invalid memon file structure")
-        
+
         return memon
     
     def jsonify(self):
-
-        meta = dict()
-        meta["song title"] = self.song_title
-        meta["artist"] = self.artist
-        meta["music path"] = self.music_path
-        meta["album cover path"] = self.album_cover_path
-        meta["BPM"] = self.BPM
-        meta["offset"] = self.offset
-
-        d = dict()
-        d["metadata"] = meta
-        d["data"] = {
-            dif_name: self.charts[dif_name].jsonify() for dif_name in sorted(self.charts,key=MemonChart.cmp_key)
+        return {
+            "version": "0.1.0",
+            "metadata": {
+                "song title": self.song_title,
+                "artist": self.artist,
+                "music path": self.music_path,
+                "album cover path": self.album_cover_path,
+                "BPM": self.BPM,
+                "offset": self.offset
+            },
+            "data": {
+                dif_name: chart.jsonify()
+                for dif_name, chart in self.charts.items()
+            }
         }
-
-        return d
 
     @classmethod
     def fromEve(cls, eveLines: List[EveLine], difName="", ignoreBPM=False):
-        
         memon : Memon = cls()
-
         chart = MemonChart()
-
         chart.dif_name = difName
-
         tempo_lines = [x for x in eveLines if x.type=="TEMPO"]
 
         if not tempo_lines:
@@ -483,7 +431,6 @@ class Memon:
             chart.resolution = 300
 
         for noteLine in filter(lambda x:x.type in ["PLAY","LONG"],eveLines):
-
             if ignoreBPM:
                 chart.notes.add(MemonNote.fromEveLineIgnoringBPM(noteLine))
             else:
